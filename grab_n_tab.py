@@ -593,8 +593,12 @@ def strip_geometry(region, cats):
     else:
         x0, x1 = region.width - strip_w, region.width
     blf.size(0, _tab_font_px())
-    pad = round(23 * s)
+    
+    # --- FIX 1: PADDING OVERHAUL ---
+    # Reduced from 23 to 16 to accurately map Blender's geometric hitboxes. 
+    pad = round(16 * s)
     y = region.height - round(4 * s)
+    
     rects = []
     for cat in cats:
         h = blf.dimensions(0, cat)[0] + pad
@@ -744,7 +748,13 @@ def _on_strip(context, event):
         return None
     if context.area is None or context.area.type != SPACE:
         return None
-    cats = visible_order()
+        
+    # --- FIX 2: REALITY OVERRIDE ---
+    # Force the hit test to only use Blender's confirmed visual layout, 
+    # preventing natively hidden tabs from leaving invisible empty space.
+    global _current_applied
+    cats = _current_applied if _current_applied is not None else visible_order()
+    
     if not cats:
         return None
     x0, x1, rects = strip_geometry(region, cats)
@@ -1493,6 +1503,16 @@ def _startup_timer():
     return None
 
 
+@bpy.app.handlers.persistent
+def _on_load_post(dummy=None):
+    global _current_applied, _seed_tries
+    _current_applied = None
+    _seed_tries = 0
+    load_state()
+    if not bpy.app.timers.is_registered(_startup_timer):
+        bpy.app.timers.register(_startup_timer, first_interval=0.4)
+
+
 _classes = (
     GNT_OT_tab_drag,
     GNT_OT_tab_context,
@@ -1529,11 +1549,15 @@ def register():
         _orig_register()(GNT_PT_organizer)
     _register_keymaps()
     bpy.app.timers.register(_startup_timer, first_interval=0.4)
+    if _on_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_on_load_post)
 
 
 def unregister():
     global _SHUTDOWN, _APPLYING
     _SHUTDOWN = True
+    if _on_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_load_post)
     try:
         if bpy.app.timers.is_registered(_startup_timer):
             bpy.app.timers.unregister(_startup_timer)
